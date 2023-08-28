@@ -24,10 +24,11 @@ SSD1306Wire  factory_display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, 
 WiFiUDP wifiUdp;
 NTP ntp(wifiUdp);
 
-int UPDATE_MINUTES = 1;
-int HOUR_ON = 6;
-int HOUR_OFF = 23;
+int UPDATE_MINUTES = 60;
+int HOUR_ON = 7;
+int HOUR_OFF = 22;
 
+//fill in "Your WiFi SSID","Your Password"
 char *SSID = "SSID_NAME";
 char *PASSWORD = "WIFI_PASSWORD";
 
@@ -44,7 +45,7 @@ void WIFISetUp(void)
 	// delay(100);
 	// WiFi.mode(WIFI_STA);
 	// WiFi.setAutoConnect(true);
-	WiFi.begin(SSID, PASSWORD);//fill in "Your WiFi SSID","Your Password"
+	WiFi.begin(SSID, PASSWORD);
 
 	byte count = 0;
 	while(WiFi.status() != WL_CONNECTED && count < 40)
@@ -139,7 +140,7 @@ void setupNtp(void)
   }
   Serial.println("Setup NTP");
   ntp.ruleDST("EDT", Last, Sun, Mar, 12, -(4*60)); // last sunday in march 2:00, timetone +120min (+1 GMT + 1h summertime offset)
-  ntp.ruleSTD("EST", Last, Sun, Oct, 3, -(5*60)); // last sunday in october 3:00, timezone +60min (+1 GMT)
+  ntp.ruleSTD("EST", First, Sun, Nov, 1, -(5*60)); // last sunday in october 3:00, timezone +60min (+1 GMT)
   ntp.begin();
   ntp.updateInterval(10000);
   getTime();
@@ -148,10 +149,30 @@ void setupNtp(void)
 
 void getTime(void) 
 {
+  WiFi.begin();
+  // ********
+  byte count = 0;
+	while(WiFi.status() != WL_CONNECTED && count < 40)
+	{
+		count++;
+		delay(50);
+    Serial.print(".");
+	}
+
+	if(WiFi.status() == WL_CONNECTED)
+	{
+		Serial.println("\nWiFi Connecting...OK.");
+	}
+	else
+	{
+		Serial.println("\nWiFi Connecting...FAILED.");
+	}
+  //***********
   Serial.println("getTime NTP");
   if (!WiFi.isConnected())
   {
     Serial.println("WiFi disconnected, skipping NTP time");
+    WiFi.disconnect(true);
     return;
   }
 
@@ -168,6 +189,7 @@ void getTime(void)
   } else {
     Serial.println("RTC set");
   }
+  WiFi.disconnect(true);
 }
 
 void showTime()
@@ -177,8 +199,6 @@ void showTime()
   time_t epoch = ntp.epoch();
   uint32_t utc = ntp.utc();
   time_t t = time(NULL);
-  // Serial.printf("UTC:       %s", asctime(gmtime(&t)));
-  // printf("local:     %s", asctime(localtime(&t)));
 
   putenv("TZ=EST5EDT");
   char est_time_buf[64];
@@ -192,7 +212,7 @@ void showTime()
   putenv("TZ=PST8PDT");
   strftime(pst_time_buf, sizeof (pst_time_buf),
     "%H:%M", localtime(&t));
-  Serial.printf("Date %s EST5EDT: %s :%d PST8PDT %s", est_date_buf, est_time_buf, seconds, pst_time_buf);
+  Serial.printf("Date %s EST5EDT: %s :%d PST8PDT %s ", est_date_buf, est_time_buf, seconds, pst_time_buf);
 
   if (ntp.hours() >= HOUR_ON && ntp.hours() <= HOUR_OFF) 
   {
@@ -201,55 +221,25 @@ void showTime()
     // ntp.timeZone(int8_t tzHours)
     factory_display.drawString(spacer, 21, pst_time_buf); // ntp.formattedTime("%T")); // hh:mm:ss
     factory_display.drawString(spacer, 42, est_date_buf); // ntp.formattedTime("%m/%d/%y")); // mm/dd/yy
+    int time_width = factory_display.getStringWidth(est_time_buf);
+    factory_display.drawProgressBar(time_width+5, 12, (factory_display.width() - time_width - 6), 5, (int) (seconds*100/60));
+    factory_display.display();
   } else {
     factory_display.drawString(epoch%20, (epoch/100) % 4, ".");
   }
-  int time_width = factory_display.getStringWidth(est_time_buf);
-  factory_display.drawProgressBar(time_width+5, 12, (factory_display.width() - time_width - 6), 5, (int) (seconds*100/60));
-  factory_display.display();
   Serial.printf("UTC: %d Epoch: %d, delta %d\n", utc, epoch, (epoch - utc));
-  // Serial.println(ntp.utc());
-
-  const auto p0 = std::chrono::time_point<std::chrono::system_clock>{};
-  const auto p1 = std::chrono::system_clock::now();
-
-  std::time_t epoch_time = std::chrono::system_clock::to_time_t(p0);
-  Serial.printf("epoch: %s", std::ctime(&epoch_time));
-  std::time_t today_time = std::chrono::system_clock::to_time_t(p1);
-  Serial.printf("today: %s", std::ctime(&today_time));
-  // std::cout << "hours since epoch: "
-  //           << std::chrono::duration_cast<std::chrono::hours>(
-  //                 p1.time_since_epoch()).count() 
-  //           << '\n';
-
-  // time_t now = time(0);
-  // // Convert now to tm struct for local timezone
-  // tm* localtm = localtime(&now);
-  // Serial.printf("The local date and time is: %s", asctime(localtm));
-  #ifdef __STDC_LIB_EXT1__
-      struct tm buf;
-      char str[26];
-      asctime_s(str,sizeof str,gmtime_s(&t, &buf));
-      Serial.printf("UTC:       %s", str);
-      asctime_s(str,sizeof str,localtime_s(&t, &buf));
-      Serial.printf("local:     %s", str);
-  #endif
-
 }
 
 void doit() {
 	// WiFi.disconnect(); //
 	// WiFi.mode(WIFI_STA);
   if (ntp.year() < 2020 || (ntp.epoch() - ntp.utc()) > UPDATE_MINUTES * 60)
+  // if ((ntp.epoch() - ntp.utc()) > 30)
   {
     Serial.println("Refreshing time...");
-    Serial.println(ntp.epoch() - ntp.utc());
     getTime();
   }
   showTime();
-
-	// WIFIScan(1);
-
 	attachInterrupt(0,interrupt_GPIO0,FALLING);
 
 }
