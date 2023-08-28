@@ -16,6 +16,7 @@
 #include <sys/time.h>
 #include <errno.h>
 #include <stdlib.h>
+#include "wifi_info.h"
 
 /********************************* lora  *********************************************/
 
@@ -28,10 +29,6 @@ int UPDATE_MINUTES = 60;
 int HOUR_ON = 7;
 int HOUR_OFF = 22;
 
-//fill in "Your WiFi SSID","Your Password"
-char *SSID = "SSID_NAME";
-char *PASSWORD = "WIFI_PASSWORD";
-
 void logo(){
 	factory_display.clear();
 	factory_display.drawXbm(0,5,logo_width,logo_height,(const unsigned char *)logo_bits);
@@ -43,7 +40,7 @@ void WIFISetUp(bool display=true, bool first_time=true)
 	WiFi.mode(WIFI_STA);
 	// WiFi.setAutoConnect(true);
   if (first_time) {
-    WiFi.begin(SSID, PASSWORD);
+    WiFi.begin(WIFI_SSID, WIFI_PASSKEY);
   } else {
     WiFi.begin();
   }
