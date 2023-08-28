@@ -38,47 +38,55 @@ void logo(){
 	factory_display.display();
 }
 
-void WIFISetUp(void)
+void WIFISetUp(bool display=true, bool first_time=true)
 {
-	// Set WiFi to station mode and disconnect from an AP if it was previously connected
-	// WiFi.disconnect(true);
-	// delay(100);
-	// WiFi.mode(WIFI_STA);
+	WiFi.mode(WIFI_STA);
 	// WiFi.setAutoConnect(true);
-	WiFi.begin(SSID, PASSWORD);
+  if (first_time) {
+    WiFi.begin(SSID, PASSWORD);
+  } else {
+    WiFi.begin();
+  }
 
 	byte count = 0;
-	while(WiFi.status() != WL_CONNECTED && count < 40)
+	while(WiFi.status() != WL_CONNECTED && count < 50)
 	{
 		count++;
-		delay(500);
+		delay(50);
     Serial.print(".");
-		factory_display.drawString(0, 0, "WiFi Connecting...");
-    factory_display.drawProgressBar(0, 10, 40, 5, count);
-		factory_display.display();
+    if (display)
+    {
+      factory_display.drawString(0, 0, "WiFi Connecting...");
+      factory_display.drawProgressBar(0, 10, 40, 5, count);
+      factory_display.display();
+    }
 	}
 
-	factory_display.clear();
+
+  char *msg;
 	if(WiFi.status() == WL_CONNECTED)
 	{
-		factory_display.drawString(0, 0, "WiFi Connecting...OK.");
-		factory_display.display();
+		msg = "WiFi Connecting...OK.";
 	}
 	else
 	{
-		factory_display.clear();
-		factory_display.drawString(0, 0, "WiFi Connecting...Failed");
-		factory_display.display();
-    Serial.println("WiFi Connecting...Failed");
+    msg = "WiFi Connecting...Failed";
 	}
-	factory_display.drawString(0, 8 /*10*/, "WIFI Setup done");
-	factory_display.display();
-	delay(500);
+
+  Serial.println(msg);
+  if (display) {
+    factory_display.clear();
+		factory_display.drawString(0, 0, msg);
+  	factory_display.drawString(0, 10, "WIFI Setup done");
+		factory_display.display();
+    delay(500);
+  }
 }
 
 
 bool resendflag=false;
 bool deepsleepflag=false;
+bool lightsleepflag=true;
 bool interrupt_flag = false;
 void interrupt_GPIO0()
 {
@@ -149,25 +157,9 @@ void setupNtp(void)
 
 void getTime(void) 
 {
-  WiFi.begin();
-  // ********
-  byte count = 0;
-	while(WiFi.status() != WL_CONNECTED && count < 40)
-	{
-		count++;
-		delay(50);
-    Serial.print(".");
-	}
 
-	if(WiFi.status() == WL_CONNECTED)
-	{
-		Serial.println("\nWiFi Connecting...OK.");
-	}
-	else
-	{
-		Serial.println("\nWiFi Connecting...FAILED.");
-	}
-  //***********
+  WIFISetUp(false, false);
+
   Serial.println("getTime NTP");
   if (!WiFi.isConnected())
   {
@@ -177,10 +169,8 @@ void getTime(void)
   }
 
   ntp.update();
-  // Serial.println(ntp.formattedTime("%d/%m/%Y %A %T"));
-  // Serial.println(ntp.epoch());
 
-  // set RTC to current UTC
+  // set RTC to current UTC so we can use builtin POSIX TZ calculations
   struct timeval tv{ntp.epoch(), 0};
   if (settimeofday(&tv, 0)) 
   {
@@ -192,19 +182,28 @@ void getTime(void)
   WiFi.disconnect(true);
 }
 
+bool is_night()
+{
+  return ntp.hours() < HOUR_ON || ntp.hours() > HOUR_OFF;
+}
+
 void showTime()
 {
   factory_display.clear();
+  // Bigger font so easier to read
   factory_display.setFont(ArialMT_Plain_24);
+  // scale 0-255
+  factory_display.setBrightness(100);
   time_t epoch = ntp.epoch();
   uint32_t utc = ntp.utc();
   time_t t = time(NULL);
 
-  putenv("TZ=EST5EDT");
   char est_time_buf[64];
   char est_date_buf[64];
   char pst_time_buf[64];
   int seconds = ntp.seconds();
+  // get time in EDT then in PDT. Let the lib figure out all the hour offsets
+  putenv("TZ=EST5EDT");
   strftime(est_time_buf, sizeof (est_time_buf),
     "%H:%M", localtime(&t));
   strftime(est_date_buf, sizeof (est_date_buf),
@@ -214,46 +213,53 @@ void showTime()
     "%H:%M", localtime(&t));
   Serial.printf("Date %s EST5EDT: %s :%d PST8PDT %s ", est_date_buf, est_time_buf, seconds, pst_time_buf);
 
-  if (ntp.hours() >= HOUR_ON && ntp.hours() <= HOUR_OFF) 
+  if (!is_night()) 
   {
+    // wiggle display left/right to prevent burn-in
     int spacer = (epoch/60) % 4;
     factory_display.drawString(spacer, 0, est_time_buf); // ntp.formattedTime("%T")); // hh:mm:ss
     // ntp.timeZone(int8_t tzHours)
     factory_display.drawString(spacer, 21, pst_time_buf); // ntp.formattedTime("%T")); // hh:mm:ss
     factory_display.drawString(spacer, 42, est_date_buf); // ntp.formattedTime("%m/%d/%y")); // mm/dd/yy
     int time_width = factory_display.getStringWidth(est_time_buf);
-    factory_display.drawProgressBar(time_width+5, 12, (factory_display.width() - time_width - 6), 5, (int) (seconds*100/60));
+    factory_display.drawProgressBar(time_width+5+spacer, 12+spacer, (factory_display.width() - time_width - 10), 5, (int) (seconds*100/60));
     factory_display.display();
   } else {
+    // show a dot so we know it's alive, move it to different spot to prevent burn-in
+    factory_display.clear();
     factory_display.drawString(epoch%20, (epoch/100) % 4, ".");
+    factory_display.display();
   }
   Serial.printf("UTC: %d Epoch: %d, delta %d\n", utc, epoch, (epoch - utc));
 }
 
-void doit() {
-	// WiFi.disconnect(); //
-	// WiFi.mode(WIFI_STA);
-  if (ntp.year() < 2020 || (ntp.epoch() - ntp.utc()) > UPDATE_MINUTES * 60)
+void loop()
+{
+  long long light_sleep_msec = 330; // * (is_night() ? 10 : 1);
+  // uint64_t chipid=ESP.getEfuseMac();//The chip ID is essentially its MAC address(length: 6 bytes).
+  // Serial.printf("ESP32ChipID=%04X",(uint16_t)(chipid>>32));//print High 2 bytes
+  // Serial.printf("%08X\n",(uint32_t)chipid);//print Low 4bytes.
+  digitalWrite(LED, LOW);  
   // if ((ntp.epoch() - ntp.utc()) > 30)
+  if (ntp.year() < 2020 || (ntp.epoch() - ntp.utc()) > UPDATE_MINUTES * 60)
   {
     Serial.println("Refreshing time...");
     getTime();
   }
   showTime();
 	attachInterrupt(0,interrupt_GPIO0,FALLING);
-
-}
-
-
-void loop()
-{
-  // uint64_t chipid=ESP.getEfuseMac();//The chip ID is essentially its MAC address(length: 6 bytes).
-  // Serial.printf("ESP32ChipID=%04X",(uint16_t)(chipid>>32));//print High 2 bytes
-  // Serial.printf("%08X\n",(uint32_t)chipid);//print Low 4bytes.
-  digitalWrite(LED, LOW);  
-  doit();
-  delay(100);
+  delay(10);
   interrupt_handle();
+
+  if (lightsleepflag)
+  {
+    Serial.println("Light sleep...");
+    delay(10);
+    esp_sleep_enable_timer_wakeup(1000LL * light_sleep_msec);
+    esp_light_sleep_start();
+    Serial.println("Light sleep DONE");
+  }
+
   if(deepsleepflag)
   {
     Serial.printf("Before deepsleepflag\n");
